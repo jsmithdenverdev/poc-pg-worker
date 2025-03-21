@@ -25,15 +25,26 @@ type task struct {
 // processNotification processes a notification received from the database.
 // The notification is expected to contain a JSON payload that can be
 // unmarshalled into a task struct.
-func processNotification(ctx context.Context, logger *slog.Logger, notification *pgconn.Notification) error {
+func processNotification(ctx context.Context, logger *slog.Logger, notification *pgconn.Notification, pool *pgxpool.Pool) error {
 	var t task
 	if err := json.Unmarshal([]byte(notification.Payload), &t); err != nil {
 		return fmt.Errorf("failed to unmarshal task: %w", err)
 	}
 
+	// Update task status
+	if _, err := pool.Exec(ctx, "UPDATE tasks SET status = 'processing' WHERE id = $1", t.ID); err != nil {
+		return fmt.Errorf("failed to update task status: %w", err)
+	}
+
 	// Process the task here
 	// For now, just log it
 	logger.InfoContext(ctx, "Processing task", slog.Any("task", t))
+
+	// Update task status
+	if _, err := pool.Exec(ctx, "UPDATE tasks SET status = 'completed' WHERE id = $1", t.ID); err != nil {
+		return fmt.Errorf("failed to update task status: %w", err)
+	}
+
 	return nil
 }
 
@@ -96,7 +107,7 @@ func worker(pool *pgxpool.Pool, logger *slog.Logger, channelName string) func(ct
 				}
 
 				// Process notification
-				if err := processNotification(ctx, logger, notification); err != nil {
+				if err := processNotification(ctx, logger, notification, pool); err != nil {
 					// Log processing error and continue
 					fmt.Fprintf(os.Stderr, "error processing notification: %s\n", err)
 				}
