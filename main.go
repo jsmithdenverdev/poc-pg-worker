@@ -16,8 +16,10 @@ import (
 )
 
 type config struct {
-	DatabaseURL string `env:"DATABASE_URL"`
-	ServerPort  string `env:"SERVER_PORT"`
+	DatabaseURL     string `env:"DATABASE_URL"`
+	ServerPort      string `env:"SERVER_PORT"`
+	VapidPublicKey  string `env:"VAPID_PUBLIC_KEY"`
+	VapidPrivateKey string `env:"VAPID_PRIVATE_KEY"`
 }
 
 func main() {
@@ -60,7 +62,10 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "error listening and serving: %s\n", err)
 		}
 	}()
+
 	var wg sync.WaitGroup
+
+	// Handle graceful shutdown
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -72,12 +77,23 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "error shutting down http server: %s\n", err)
 		}
 	}()
-	// Start the worker
-	workerFn := worker(pool, logger, "tasks_channel")
+
+	// Start the task worker
+	taskWorker := worker(pool, logger, "tasks_channel")
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := workerFn(ctx); err != nil {
+		if err := taskWorker(ctx, processTask(logger, pool)); err != nil {
+			fmt.Fprintf(os.Stderr, "worker error: %s\n", err)
+		}
+	}()
+
+	// Start the notification worker
+	notificationWorker := worker(pool, logger, "notifications_channel")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := notificationWorker(ctx, processNotification(cfg, logger, pool, http.DefaultClient)); err != nil {
 			fmt.Fprintf(os.Stderr, "worker error: %s\n", err)
 		}
 	}()
